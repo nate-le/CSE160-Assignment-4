@@ -36,6 +36,11 @@ var FSHADER_SOURCE = `
   uniform vec3 u_cameraPos;
   varying vec4 v_VertPos;
   uniform bool u_lightOn;
+  uniform vec3 u_lightColor;
+  uniform vec3 u_spotlightPos;
+  uniform vec3 u_spotDirection;
+  uniform float u_spotCosineCutoff;
+  uniform float u_spotExponent;
   void main() {
     vec4 baseColor;
     if (u_whichTexture == -3) {
@@ -61,7 +66,6 @@ var FSHADER_SOURCE = `
     }
 
     vec3 lightVector = u_lightPos - vec3(v_VertPos);
-    float r = length(lightVector);
     vec3 L = normalize(lightVector);
     vec3 N = normalize(v_Normal);
     float nDotL = max(dot(N, L), 0.0);
@@ -75,14 +79,30 @@ var FSHADER_SOURCE = `
     // Specular
     float specular = pow(max(dot(E, R), 0.0), 10.0);
     
-    vec3 diffuse = vec3(baseColor) * nDotL * 0.7;
-    vec3 ambient = vec3(baseColor) * 0.3;
+    vec3 diffuse = vec3(baseColor) * u_lightColor * nDotL * 0.7;
+    vec3 ambient = vec3(baseColor) * u_lightColor * 0.3;
+    
     if (!u_lightOn) {
       gl_FragColor = baseColor;
       return;
     }
 
-    gl_FragColor = vec4(specular + diffuse + ambient, 1.0);
+    vec3 spotDiffuse = vec3(0.0);
+    float spotFactor = 0.0;
+
+    vec3 spotLightVector = u_spotlightPos - vec3(v_VertPos);
+    vec3 sL = normalize(spotLightVector);
+    vec3 sD = normalize(-u_spotDirection);
+
+    float spotCosine = dot(sD, sL);
+
+    if (spotCosine >= u_spotCosineCutoff) {
+      spotFactor = pow(spotCosine, u_spotExponent);
+    }
+
+    spotDiffuse = baseColor.rgb * u_lightColor * spotFactor * 1.7;
+
+    gl_FragColor = vec4(specular + diffuse + ambient + spotDiffuse, 1.0);
   }`
 
 // Global Variables
@@ -102,6 +122,11 @@ let u_whichTexture;
 let u_lightPos;
 let u_cameraPos;
 let u_lightOn;
+let u_lightColor;
+let u_spotlightPos;
+let u_spotCosineCutoff;
+let u_spotDirection;
+let u_spotExponent;
 
 let camera = new Camera();
 let rotateSensitivity = 0.15;
@@ -122,6 +147,8 @@ let g_normalOn = false;
 let animateLights = false;
 let g_lightPos = [5, 4, 4];
 let g_lightOn = true;
+let g_lightColor = [1, 1, 1];
+let g_spotlightPos = [6, 10, 0];
 
 function setupWebGL() {
   // Retrieve <canvas> element
@@ -188,6 +215,36 @@ function connectVariablesToGLSL() {
     return;
   }
 
+  u_lightColor = gl.getUniformLocation(gl.program, "u_lightColor");
+  if (!u_lightColor) {
+    console.log("Failed to get the storage location of u_lightColor.");
+    return;
+  }
+
+  u_spotlightPos = gl.getUniformLocation(gl.program, "u_spotlightPos");
+  if (!u_spotlightPos) {
+    console.log("Failed to get the storage location of u_spotlightPos.");
+    return;
+  }
+
+  u_spotCosineCutoff = gl.getUniformLocation(gl.program, "u_spotCosineCutoff");
+  if (!u_spotCosineCutoff) {
+    console.log("Failed to get the storage location of u_spotCosineCutoff.");
+    return;
+  }
+
+  u_spotDirection = gl.getUniformLocation(gl.program, "u_spotDirection");
+  if (!u_spotDirection) {
+    console.log("Failed to get the storage location of u_spotDirection.");
+    return;
+  }
+
+  u_spotExponent = gl.getUniformLocation(gl.program, "u_spotExponent");
+  if (!u_spotExponent) {
+    console.log("Failed to get the storage location of u_spotExponent.");
+    return;
+  }
+
   // Get the storage location of u_ModelMatrix
   u_ModelMatrix = gl.getUniformLocation(gl.program, 'u_ModelMatrix');
   if (!u_ModelMatrix) {
@@ -247,10 +304,16 @@ function addActionsForHtmlUI() {
   document.addEventListener("mouseup", () => { isDragging = false; document.body.style.cursor = "default"; });
 
   document.getElementById("lightSlideX").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[0] = this.value / 100; renderScene(); } });
-
   document.getElementById("lightSlideY").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[1] = this.value / 100; renderScene(); } });
-
   document.getElementById("lightSlideZ").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[2] = this.value / 100; renderScene(); } });
+
+  document.getElementById("lightSlideRed").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightColor[0] = this.value / 255; gl.uniform3fv(u_lightColor, g_lightColor); renderScene(); } });
+  document.getElementById("lightSlideGreen").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightColor[1] = this.value / 255; gl.uniform3fv(u_lightColor, g_lightColor); renderScene(); } });
+  document.getElementById("lightSlideBlue").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightColor[2] = this.value / 255; gl.uniform3fv(u_lightColor, g_lightColor); renderScene(); } });
+
+  document.getElementById("spotlightSlideX").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_spotlightPos[0] = this.value / 100; renderScene(); } });
+  document.getElementById("spotlightSlideY").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_spotlightPos[1] = this.value / 100; renderScene(); } });
+  document.getElementById("spotlightSlideZ").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_spotlightPos[2] = this.value / 100; renderScene(); } });
 }
 
 function updateAnimations() {
@@ -409,12 +472,14 @@ function drawMap() {
           cube.textureNum = 1;
           if (g_normalOn) cube.textureNum = -3;
           cube.matrix.translate(x, y, z - 25);
+          cube.matrix.rotate(180, 0, 1, 0);
           cube.render(); 
         } else {
           let chicken = new Cube();
           chicken.textureNum = 3;
           if (g_normalOn) chicken.textureNum = -3;
           chicken.matrix.translate(x, y, z - 25);
+          chicken.matrix.rotate(180, 0, 1, 0);
           chicken.render();
         }
       }
@@ -456,19 +521,21 @@ function removeBlock(camera) {
   }
 }
 
-/*let raindrops = [];
+let raindrops = [];
 
 for (let i = 0; i < 200; i++) {
   let x = Math.random() * 32;
   let y = Math.random() * 20;
   let z = Math.random() * 32 - 25;
   raindrops.push(new Raindrop(x, y, z));
-}*/
+}
 
 // Draw every shape that is supposed to be in the canvas
 function renderScene() {
   // Check the time at the start of this function
   var startTime = performance.now();
+
+  let radians = 30 * (Math.PI / 180);
 
   // Pass the projection matrix
   gl.uniformMatrix4fv(u_ProjectionMatrix, false, camera.projMat.elements);
@@ -482,6 +549,16 @@ function renderScene() {
 
   gl.uniform1i(u_lightOn, g_lightOn);
 
+  gl.uniform3f(u_lightColor, g_lightColor[0], g_lightColor[1], g_lightColor[2]);
+
+  gl.uniform3f(u_spotlightPos, g_spotlightPos[0], g_spotlightPos[1], g_spotlightPos[2]);
+
+  gl.uniform1f(u_spotCosineCutoff, Math.cos(radians));
+
+  gl.uniform3f(u_spotDirection, 0.0, -1.0, 0.0);
+
+  gl.uniform1f(u_spotExponent, 90.0);
+
   // Clear <canvas>
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -490,6 +567,12 @@ function renderScene() {
   light.matrix.translate(g_lightPos[0], g_lightPos[1], g_lightPos[2]);
   light.matrix.scale(-0.1, -0.1, -0.1);
   light.render();
+
+  let spotlight = new Cube();
+  spotlight.color = [0.94, 0.2, 1, 1];
+  spotlight.matrix.translate( g_spotlightPos[0], g_spotlightPos[1], g_spotlightPos[2]);
+  spotlight.matrix.scale(-0.2, -0.2, -0.2);
+  spotlight.render();
 
   var sky = new Cube();
   sky.textureNum = 0;
@@ -502,7 +585,8 @@ function renderScene() {
   sun.textureNum = 2;
   if (g_normalOn) sun.textureNum = -3;
   sun.matrix.scale(2, 2, 2);
-  sun.matrix.translate(-0.9, 4, -13.25);
+  sun.matrix.translate(0.05, 3.995, -14.25);
+  sun.matrix.rotate(180, 0, 1, 0);
   sun.render();
 
   var ground = new Cube();
@@ -517,14 +601,16 @@ function renderScene() {
   egg.textureNum = 4;
   if (g_normalOn) egg.textureNum = -3;
   egg.matrix.scale(.5, .5, .5);
-  egg.matrix.translate(8 , 2, 8);
+  egg.matrix.translate(7.5, 2, 8.5);
+  egg.matrix.rotate(180, 0, 1, 0);
   egg.render();
 
   var chicken_j = new Cube();
   chicken_j.textureNum = 5;
   if (g_normalOn) chicken_j.textureNum = -3;
   chicken_j.matrix.scale(1, 1, 1);
-  chicken_j.matrix.translate(3.8 , 1.5, 4.2);
+  chicken_j.matrix.translate(4, 1.5, 4);
+  chicken_j.matrix.rotate(180, 0, 1, 0);
   chicken_j.render();
 
   let sphere = new Sphere();
@@ -533,12 +619,12 @@ function renderScene() {
   sphere.matrix.scale(0.5, 0.5, 0.5);
   sphere.render();
 
-  //drawMap();
+  drawMap();
 
-  /*for (let drop of raindrops) {
+  for (let drop of raindrops) {
     drop.update();
     drop.render();
-  }*/
+  }
 
   
   // Check the time at the end of the function, and show on web page
