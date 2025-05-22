@@ -14,6 +14,27 @@
 
     <p id="numdot"> XXX </p>
 
+    <p>
+      <button type="button" id="normalOn">Normal On</button>
+      <button type="button" id="normalOff">Normal Off</button>
+    </p>
+
+    <p>
+      <button type="button" id="animateOn">Animate On</button>
+      <button type="button" id="animateOff">Animate Off</button>
+    </p>
+
+    <p>
+      <button type="button" id="lightOn">Light On</button>
+      <button type="button" id="lightOff">Light Off</button>
+    </p>
+
+    <p>
+      Light X <input type="range" min="-180" max="950" value="400" class="slider" id="lightSlideX"><br>
+      Light Y <input type="range" min="250" max="950" value="600" class="slider" id="lightSlideY"><br>
+      Light Z <input type="range" min="-1500" max="925" value="400" class="slider" id="lightSlideZ"><br>
+    </p>
+
     <script src="./lib/webgl-utils.js"></script>
     <script src="./lib/webgl-debug.js"></script>
     <script src="./lib/cuon-utils.js"></script>
@@ -24,6 +45,7 @@
     <script src="Point.js"></script>
     <script src="Camera.js"></script>
     <script src="Rain.js"></script>
+    <script src="Sphere.js"></script>
     <script src="World.js"></script>
   </body>
 </html>

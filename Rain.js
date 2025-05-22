@@ -20,7 +20,7 @@ class Raindrop {
       drop.color = [0.6, 0.6, 1.0, 0.5];
       drop.matrix.translate(this.x, this.y, this.z);
       drop.matrix.scale(0.05, 0.2, 0.05);
-      drop.renderfast();
+      drop.render();
     }
   }
   

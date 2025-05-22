@@ -4,19 +4,26 @@ var VSHADER_SOURCE = `
   precision mediump float;
   attribute vec4 a_Position;
   attribute vec2 a_UV;
+  attribute vec3 a_Normal;
   varying vec2 v_UV;
+  varying vec3 v_Normal;
+  varying vec4 v_VertPos;
   uniform mat4 u_ModelMatrix;
+  uniform mat4 u_NormalMatrix;
   uniform mat4 u_ViewMatrix;
   uniform mat4 u_ProjectionMatrix;
   void main() {
     gl_Position = u_ProjectionMatrix * u_ViewMatrix * u_ModelMatrix * a_Position;
     v_UV = a_UV;
+    v_Normal = normalize(vec3(u_NormalMatrix * vec4(a_Normal, 1)));
+    v_VertPos = u_ModelMatrix * a_Position;
   }`
 
 // Fragment shader program
 var FSHADER_SOURCE = `
   precision mediump float;
   varying vec2 v_UV;
+  varying vec3 v_Normal;
   uniform vec4 u_FragColor;
   uniform sampler2D u_Sampler0;
   uniform sampler2D u_Sampler1;
@@ -25,26 +32,57 @@ var FSHADER_SOURCE = `
   uniform sampler2D u_Sampler4;
   uniform sampler2D u_Sampler5;
   uniform int u_whichTexture;
+  uniform vec3 u_lightPos;
+  uniform vec3 u_cameraPos;
+  varying vec4 v_VertPos;
+  uniform bool u_lightOn;
   void main() {
-    if (u_whichTexture == -2) {
-        gl_FragColor = u_FragColor;
-      } else if (u_whichTexture == -1) {
-       gl_FragColor = vec4(v_UV, 1.0, 1.0);
-      } else if (u_whichTexture == 0) {
-        gl_FragColor = texture2D(u_Sampler0, v_UV);
-      } else if (u_whichTexture == 1) {
-        gl_FragColor = texture2D(u_Sampler1, v_UV);
-      } else if (u_whichTexture == 2) {
-        gl_FragColor = texture2D(u_Sampler2, v_UV);
-      } else if (u_whichTexture == 3) {
-        gl_FragColor = texture2D(u_Sampler3, v_UV);
-      } else if (u_whichTexture == 4) {
-        gl_FragColor = texture2D(u_Sampler4, v_UV);
-      } else if (u_whichTexture == 5) {
-        gl_FragColor = texture2D(u_Sampler5, v_UV);
-      } else {
-        gl_FragColor = vec4(1, 0.2, 0.2, 1);
-      }
+    vec4 baseColor;
+    if (u_whichTexture == -3) {
+      baseColor = vec4((v_Normal + 1.0) / 2.0, 1.0);
+    } else if (u_whichTexture == -2) {
+      baseColor = u_FragColor;
+    } else if (u_whichTexture == -1) {
+      gl_FragColor = vec4(v_UV, 1.0, 1.0);
+    } else if (u_whichTexture == 0) {
+      baseColor = texture2D(u_Sampler0, v_UV);
+    } else if (u_whichTexture == 1) {
+      baseColor = texture2D(u_Sampler1, v_UV);
+    } else if (u_whichTexture == 2) {
+      baseColor = texture2D(u_Sampler2, v_UV);
+    } else if (u_whichTexture == 3) {
+      baseColor = texture2D(u_Sampler3, v_UV);
+    } else if (u_whichTexture == 4) {
+      baseColor = texture2D(u_Sampler4, v_UV);
+    } else if (u_whichTexture == 5) {
+      baseColor = texture2D(u_Sampler5, v_UV);
+    } else {
+      baseColor = vec4(1, 0.2, 0.2, 1);
+    }
+
+    vec3 lightVector = u_lightPos - vec3(v_VertPos);
+    float r = length(lightVector);
+    vec3 L = normalize(lightVector);
+    vec3 N = normalize(v_Normal);
+    float nDotL = max(dot(N, L), 0.0);
+
+    // Reflection
+    vec3 R = reflect(-L, N);
+
+    // Eye
+    vec3 E = normalize(u_cameraPos - vec3(v_VertPos));
+
+    // Specular
+    float specular = pow(max(dot(E, R), 0.0), 10.0);
+    
+    vec3 diffuse = vec3(baseColor) * nDotL * 0.7;
+    vec3 ambient = vec3(baseColor) * 0.3;
+    if (!u_lightOn) {
+      gl_FragColor = baseColor;
+      return;
+    }
+
+    gl_FragColor = vec4(specular + diffuse + ambient, 1.0);
   }`
 
 // Global Variables
@@ -52,13 +90,18 @@ let canvas;
 let gl;
 let a_Position;
 let a_UV;
+let a_Normal;
 let u_FragColor;
 let u_Size;
 let u_ModelMatrix;
+let u_NormalMatrix;
 let u_ProjectionMatrix;
 let u_ViewMatrix;
 let u_Sampler0;
 let u_whichTexture;
+let u_lightPos;
+let u_cameraPos;
+let u_lightOn;
 
 let camera = new Camera();
 let rotateSensitivity = 0.15;
@@ -75,6 +118,10 @@ const textures = [
 // Globals related UI elements
 var g_startTime = performance.now() / 1000.0;
 var g_seconds = performance.now() / 1000.0 - g_startTime;
+let g_normalOn = false;
+let animateLights = false;
+let g_lightPos = [5, 4, 4];
+let g_lightOn = true;
 
 function setupWebGL() {
   // Retrieve <canvas> element
@@ -110,6 +157,12 @@ function connectVariablesToGLSL() {
     return;
   }
 
+  a_Normal = gl.getAttribLocation(gl.program, "a_Normal");
+  if (a_Normal < 0) {
+    console.log('Failed to get the storage location of a_Normal');
+    return;
+  }
+
   // Get the storage location of u_FragColor
   u_FragColor = gl.getUniformLocation(gl.program, 'u_FragColor');
   if (!u_FragColor) {
@@ -117,10 +170,34 @@ function connectVariablesToGLSL() {
     return;
   }
 
+  u_lightPos = gl.getUniformLocation(gl.program, "u_lightPos");
+  if (!u_lightPos) {
+    console.log("Failed to get the storage location of u_lightPos.");
+    return;
+  }
+
+  u_cameraPos = gl.getUniformLocation(gl.program, "u_cameraPos");
+  if (!u_cameraPos) {
+    console.log("Failed to get the storage location of u_cameraPos.");
+    return;
+  }
+
+  u_lightOn = gl.getUniformLocation(gl.program, "u_lightOn");
+  if (!u_lightOn) {
+    console.log("Failed to get the storage location of u_lightOn.");
+    return;
+  }
+
   // Get the storage location of u_ModelMatrix
   u_ModelMatrix = gl.getUniformLocation(gl.program, 'u_ModelMatrix');
   if (!u_ModelMatrix) {
     console.log('Failed to get the storage location of u_ModelMatrix');
+    return;
+  }
+
+  u_NormalMatrix = gl.getUniformLocation(gl.program, "u_NormalMatrix");
+  if (!u_NormalMatrix) {
+    console.log("Failed to get the storage location of u_NormalMatrix");
     return;
   }
 
@@ -145,10 +222,20 @@ function connectVariablesToGLSL() {
   // Set an initial value for this matrix to identity
   var identityM = new Matrix4();
   gl.uniformMatrix4fv(u_ModelMatrix, false, identityM.elements);
+  gl.uniformMatrix4fv(u_NormalMatrix, false, identityM.elements);
 }
 
 // Set up actions for the HTML UI elements
 function addActionsForHtmlUI() {
+  document.getElementById("normalOn").onclick = function () { g_normalOn = true; };
+  document.getElementById("normalOff").onclick = function () { g_normalOn = false; };
+
+  document.getElementById("animateOn").onclick = function () { animateLights = true; };
+  document.getElementById("animateOff").onclick = function () { animateLights = false; };
+
+  document.getElementById("lightOn").addEventListener("click", () => { g_lightOn = true; });
+  document.getElementById("lightOff").addEventListener("click", () => { g_lightOn = false; });
+
   document.addEventListener("keydown", keydown);
   let isDragging = false;
   let lastX = 0;
@@ -158,6 +245,21 @@ function addActionsForHtmlUI() {
   document.addEventListener("mousemove", (ev) => { if (isDragging) { let deltaX = ev.clientX - lastX; let deltaY = ev.clientY - lastY; camera.pan(-deltaX * rotateSensitivity); camera.tilt(deltaY * rotateSensitivity); lastX = ev.clientX; lastY = ev.clientY; } });
 
   document.addEventListener("mouseup", () => { isDragging = false; document.body.style.cursor = "default"; });
+
+  document.getElementById("lightSlideX").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[0] = this.value / 100; renderScene(); } });
+
+  document.getElementById("lightSlideY").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[1] = this.value / 100; renderScene(); } });
+
+  document.getElementById("lightSlideZ").addEventListener("mousemove", function (ev) { if (ev.buttons == 1) { g_lightPos[2] = this.value / 100; renderScene(); } });
+}
+
+function updateAnimations() {
+    if (animateLights) {
+      // Point light
+      g_lightPos[0] = 3 * Math.cos(g_seconds / 2) + 5;
+      g_lightPos[1] = 4;
+      g_lightPos[2] = 3 * Math.sin(g_seconds / 2) + 5;
+    }
 }
 
 function initTextures() {
@@ -221,6 +323,8 @@ function main() {
 function tick() {
   // Save the current time
   g_seconds = performance.now() / 1000.0 - g_startTime;
+
+  updateAnimations();
   // Draw everything
   renderScene();
   // Tell the browser to update again when it has time
@@ -303,13 +407,15 @@ function drawMap() {
         if (y < 2) {
           let cube = new Cube();
           cube.textureNum = 1;
+          if (g_normalOn) cube.textureNum = -3;
           cube.matrix.translate(x, y, z - 25);
-          cube.renderfast(); 
+          cube.render(); 
         } else {
           let chicken = new Cube();
           chicken.textureNum = 3;
+          if (g_normalOn) chicken.textureNum = -3;
           chicken.matrix.translate(x, y, z - 25);
-          chicken.renderfast();
+          chicken.render();
         }
       }
     }
@@ -350,14 +456,14 @@ function removeBlock(camera) {
   }
 }
 
-let raindrops = [];
+/*let raindrops = [];
 
 for (let i = 0; i < 200; i++) {
   let x = Math.random() * 32;
   let y = Math.random() * 20;
   let z = Math.random() * 32 - 25;
   raindrops.push(new Raindrop(x, y, z));
-}
+}*/
 
 // Draw every shape that is supposed to be in the canvas
 function renderScene() {
@@ -370,46 +476,69 @@ function renderScene() {
   // Pass the view matrix
   gl.uniformMatrix4fv(u_ViewMatrix, false, camera.viewMat.elements);
 
+  gl.uniform3f(u_lightPos, g_lightPos[0], g_lightPos[1], g_lightPos[2]);
+
+  gl.uniform3f(u_cameraPos, camera.eye.x, camera.eye.y, camera.eye.z);
+
+  gl.uniform1i(u_lightOn, g_lightOn);
+
   // Clear <canvas>
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+  var light = new Cube();
+  light.color = [2, 2, 0, 1];
+  light.matrix.translate(g_lightPos[0], g_lightPos[1], g_lightPos[2]);
+  light.matrix.scale(-0.1, -0.1, -0.1);
+  light.render();
+
   var sky = new Cube();
   sky.textureNum = 0;
+  if (g_normalOn) sky.textureNum = -3;
   sky.matrix.scale(38, 10, 38);
   sky.matrix.translate(-0.05, -0.001, 0.25);
-  sky.renderfast();
+  sky.render();
 
   var sun = new Cube();
   sun.textureNum = 2;
+  if (g_normalOn) sun.textureNum = -3;
   sun.matrix.scale(2, 2, 2);
   sun.matrix.translate(-0.9, 4, -13.25);
-  sun.renderfast();
+  sun.render();
 
   var ground = new Cube();
+  if (g_normalOn) ground.textureNum = -3;
   ground.color = [0.5, 0.7, 0.2, 1.0];
   ground.matrix.translate(-1.92, -0.001, 9.5);
   ground.matrix.scale(38, 0, 38);
   ground.matrix.translate(0, 0, 0);
-  ground.renderfast();
+  ground.render();
 
   var egg = new Cube();
   egg.textureNum = 4;
+  if (g_normalOn) egg.textureNum = -3;
   egg.matrix.scale(.5, .5, .5);
   egg.matrix.translate(8 , 2, 8);
-  egg.renderfast();
+  egg.render();
 
-  let chicken_j = new Cube();
-    chicken_j.textureNum = 5;
-    chicken_j.matrix.scale(1, 1, 1);
-    chicken_j.matrix.translate(3.8 , 1.5, 4.2);
-    chicken_j.renderfast();
+  var chicken_j = new Cube();
+  chicken_j.textureNum = 5;
+  if (g_normalOn) chicken_j.textureNum = -3;
+  chicken_j.matrix.scale(1, 1, 1);
+  chicken_j.matrix.translate(3.8 , 1.5, 4.2);
+  chicken_j.render();
 
-  drawMap();
+  let sphere = new Sphere();
+  if (g_normalOn) sphere.textureNum = -3;
+  sphere.matrix.translate(3.8, 4, 3);
+  sphere.matrix.scale(0.5, 0.5, 0.5);
+  sphere.render();
 
-  for (let drop of raindrops) {
+  //drawMap();
+
+  /*for (let drop of raindrops) {
     drop.update();
     drop.render();
-  }
+  }*/
 
   
   // Check the time at the end of the function, and show on web page
