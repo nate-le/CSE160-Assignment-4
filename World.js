@@ -48,7 +48,7 @@ var FSHADER_SOURCE = `
     } else if (u_whichTexture == -2) {
       baseColor = u_FragColor;
     } else if (u_whichTexture == -1) {
-      gl_FragColor = vec4(v_UV, 1.0, 1.0);
+      baseColor = vec4(v_UV, 1.0, 1.0);
     } else if (u_whichTexture == 0) {
       baseColor = texture2D(u_Sampler0, v_UV);
     } else if (u_whichTexture == 1) {
@@ -100,7 +100,7 @@ var FSHADER_SOURCE = `
       spotFactor = pow(spotCosine, u_spotExponent);
     }
 
-    spotDiffuse = baseColor.rgb * u_lightColor * spotFactor * 1.7;
+    spotDiffuse = vec3(baseColor) * u_lightColor * spotFactor * 1.7;
 
     gl_FragColor = vec4(specular + diffuse + ambient + spotDiffuse, 1.0);
   }`
