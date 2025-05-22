@@ -37,6 +37,7 @@ var FSHADER_SOURCE = `
   varying vec4 v_VertPos;
   uniform bool u_lightOn;
   uniform vec3 u_lightColor;
+  uniform bool u_spotlightOn;
   uniform vec3 u_spotlightPos;
   uniform vec3 u_spotDirection;
   uniform float u_spotCosineCutoff;
@@ -90,17 +91,19 @@ var FSHADER_SOURCE = `
     vec3 spotDiffuse = vec3(0.0);
     float spotFactor = 0.0;
 
-    vec3 spotLightVector = u_spotlightPos - vec3(v_VertPos);
-    vec3 sL = normalize(spotLightVector);
-    vec3 sD = normalize(-u_spotDirection);
-
-    float spotCosine = dot(sD, sL);
-
-    if (spotCosine >= u_spotCosineCutoff) {
-      spotFactor = pow(spotCosine, u_spotExponent);
+    if (u_spotlightOn) {
+      vec3 lightVector = u_spotlightPos - vec3(v_VertPos);
+      vec3 L = normalize(lightVector);
+  
+      vec3 D = normalize(-u_spotDirection); 
+      float spotCosine = dot(D, L);
+  
+      if (spotCosine >= u_spotCosineCutoff) {
+        spotFactor = pow(spotCosine, u_spotExponent);
+      }
+  
+      spotDiffuse = baseColor.rgb * u_lightColor * spotFactor * 1.7;
     }
-
-    spotDiffuse = vec3(baseColor) * u_lightColor * spotFactor * 1.7;
 
     gl_FragColor = vec4(specular + diffuse + ambient + spotDiffuse, 1.0);
   }`
@@ -123,6 +126,7 @@ let u_lightPos;
 let u_cameraPos;
 let u_lightOn;
 let u_lightColor;
+let u_spotlightOn;
 let u_spotlightPos;
 let u_spotCosineCutoff;
 let u_spotDirection;
@@ -149,6 +153,7 @@ let g_lightPos = [5, 4, 4];
 let g_lightOn = true;
 let g_lightColor = [1, 1, 1];
 let g_spotlightPos = [6, 10, 0];
+let g_spotlightOn = true;
 
 function setupWebGL() {
   // Retrieve <canvas> element
@@ -218,6 +223,12 @@ function connectVariablesToGLSL() {
   u_lightColor = gl.getUniformLocation(gl.program, "u_lightColor");
   if (!u_lightColor) {
     console.log("Failed to get the storage location of u_lightColor.");
+    return;
+  }
+
+  u_spotlightOn = gl.getUniformLocation(gl.program, "u_spotlightOn");
+  if (!u_spotlightOn) {
+    console.log("Failed to get the storage location of u_spotlightOn.");
     return;
   }
 
@@ -292,6 +303,9 @@ function addActionsForHtmlUI() {
 
   document.getElementById("lightOn").addEventListener("click", () => { g_lightOn = true; });
   document.getElementById("lightOff").addEventListener("click", () => { g_lightOn = false; });
+
+  document.getElementById("spotlightOn").addEventListener("click", () => { g_spotlightOn = true; g_lightOn = true; });
+  document.getElementById("spotlightOff").addEventListener("click", () => { g_spotlightOn = false; });
 
   document.addEventListener("keydown", keydown);
   let isDragging = false;
@@ -550,6 +564,8 @@ function renderScene() {
   gl.uniform1i(u_lightOn, g_lightOn);
 
   gl.uniform3f(u_lightColor, g_lightColor[0], g_lightColor[1], g_lightColor[2]);
+
+  gl.uniform1i(u_spotlightOn, g_spotlightOn);
 
   gl.uniform3f(u_spotlightPos, g_spotlightPos[0], g_spotlightPos[1], g_spotlightPos[2]);
 
